@@ -5,6 +5,7 @@ import json
 from abc import ABC, abstractmethod
 from enum import Enum
 import requests
+import os
 
 class AssetType(Enum):
     IMAGE = "image"
@@ -137,42 +138,101 @@ class WebSource(DataSource):
             return None
 
     def standardize_output(self, raw_data):
-        if not raw_data:
-            return []
+            if not raw_data: return []
+            try:
+                soup = BeautifulSoup(raw_data["html"], "html.parser")
+                for element in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
+                    element.decompose()
 
-        print(f"[2/2] CLEANING HTML: {raw_data['url']}")
+                # --- TARGETED SELECTION ---
+                # Most blogs wrap main content in <article> or a 'content' id/class
+                main_content = (soup.find('article') or 
+                            soup.find('main') or 
+                            soup.find(id='content') or 
+                            soup.find(class_='post-content') or 
+                            soup) # Fallback to body if none found
+
+                title = soup.title.string if soup.title else "Untitled"
+                clean_text = main_content.get_text(separator="\n", strip=True)
+
+                return [AssetObject(
+                    content=clean_text[:5000], # Increased for full blog posts
+                    source_url=raw_data["url"],
+                    asset_type=AssetType.TEXT,
+                    source_name="Web",
+                    metadata={
+                        "title": title.strip(),
+                        "ingestion_time": datetime.datetime.now().isoformat()
+                    }
+                )]
+            except Exception as e:
+                print(f"[PARSING ERROR] {e}")
+                return []
+
+
+class LocalSource(DataSource):
+    """
+    Real Local Ingestion for RAG workflows.
+    Reads local files, handles PII, and extracts metadata.
+    """
+    def fetch_data(self, file_path):
+        print(f"[1/2] READING FILE: {file_path}")
+        
+        if not os.path.exists(file_path):
+            print(f"[LOCAL ERROR] File not found: {file_path}")
+            return None
+
+        ext = os.path.splitext(file_path)[1].lower()
+        
         try:
-            soup = BeautifulSoup(raw_data["html"], "html.parser")
-
-            # Remove 'noise' elements before extracting text
-            for element in soup(["script", "style", "nav", "footer", "header", "aside", "ad"]):
-                element.decompose()
-
-            # Try to get a clean title
-            title = soup.title.string if soup.title else "Untitled Webpage"
+            if ext in [".txt", ".md", ".py", ".java", ".rs"]:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            elif ext == ".pdf":
+                # Note: Requires 'pip install pypdf'
+                import pypdf
+                reader = pypdf.PdfReader(file_path)
+                content = "\n".join([page.extract_text() for page in reader.pages])
+            else:
+                print(f"[LOCAL WARNING] Unsupported extension {ext}. Attempting raw read.")
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
             
-            # Extract text and handle whitespace
-            # Using 'get_text' with a separator ensures words don't get smashed together
-            clean_text = soup.get_text(separator="\n", strip=True)
-
-            # Limit text length for initial ingestion if needed
-            display_content = clean_text[:2000] # Adjust as per your "Deep Work" needs
-
-            return [AssetObject(
-                content=display_content,
-                source_url=raw_data["url"],
-                asset_type=AssetType.TEXT,
-                source_name="Web",
-                metadata={
-                    "title": title.strip(),
-                    "ingestion_time": datetime.datetime.now().isoformat(),
-                    "status": raw_data["status"]
-                }
-            )]
+            return {
+                "path": file_path,
+                "raw_text": content,
+                "ext": ext,
+                "size": os.path.getsize(file_path)
+            }
         except Exception as e:
-            print(f"[PARSING ERROR] Failed to clean HTML: {e}")
-            return []
+            print(f"[LOCAL ERROR] Failed to read {file_path}: {e}")
+            return None
 
+    def _sanitize_pii(self, text):
+        # Email Redaction
+        text = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', "[REDACTED_EMAIL]", text)
+        # Simple Phone Number Redaction (Optional addition)
+        # text = re.sub(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b', "[REDACTED_PHONE]", text)
+        return text
+
+    def standardize_output(self, raw_data):
+        if not raw_data: return []
+
+        print(f"[2/2] SANITIZING & ENRICHING: {raw_data['path']}")
+        clean_content = self._sanitize_pii(raw_data["raw_text"])
+        
+        return [AssetObject(
+            content=clean_content,
+            source_url=f"file://{os.path.abspath(raw_data['path'])}",
+            asset_type=AssetType.DOCUMENT if raw_data["ext"] == ".pdf" else AssetType.TEXT,
+            source_name="Local",
+            metadata={
+                "file_ext": raw_data["ext"],
+                "file_size_kb": round(raw_data["size"] / 1024, 2),
+                "security_layer": "PII_REDACTED",
+                "ingested_at": datetime.datetime.now().isoformat()
+            }
+        )]
 
 # --- TEST ---
 if __name__ == "__main__":
@@ -207,3 +267,22 @@ if __name__ == "__main__":
         else:
             print(f"FAILURE: Could not extract content from {url}")
         print("-" * 30)
+
+# 3. Test Local Source
+    local_source = LocalSource() 
+    
+    # Create a quick dummy file for testing
+    dummy_file = "test_deep_work.md"
+    with open(dummy_file, "w") as f:
+        f.write("# Project Deep Work\nContact misha@example.com for algorithmic trading logs.")
+
+    print(f"\n--- Starting Local Ingestion: {dummy_file} ---")
+    local_assets = local_source.get_assets(dummy_file)
+    
+    if local_assets:
+        asset = local_assets[0]
+        print(f"CLEAN CONTENT: {asset.content}")
+        print(f"METADATA: {asset.metadata}")
+
+    # Cleanup (Optional)
+    # os.remove(dummy_file)
