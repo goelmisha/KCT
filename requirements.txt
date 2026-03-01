@@ -1,4 +1,7 @@
 requests
 beautifulsoup4
 pypdf
+<<<<<<< HEAD
 ollama
+=======
+>>>>>>> 747156d (finalize modular kct architecture with seperate ingestor and engines packages)

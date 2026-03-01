@@ -4,6 +4,7 @@ from core.ingestors.arena import ArenaSource
 from core.ingestors.web import WebSource
 from core.ingestors.local import LocalSource
 from core.engines.orchestrator import AgenticOrchestrator
+import os
 
 try:
     from core.agent import OllamaKCTAgent
@@ -12,12 +13,19 @@ except ImportError:
     sys.exit(1)
 
 def main():
+<<<<<<< HEAD
     # 1. Environment Setup
+=======
+>>>>>>> 747156d (finalize modular kct architecture with seperate ingestor and engines packages)
     if not os.path.exists("notes.md"):
         with open("notes.md", "w") as f:
             f.write("Deep work is a superpower in our increasingly competitive economy.")
 
+<<<<<<< HEAD
     # 2. Initialize Ingestion Tools
+=======
+    # Initialize Sources
+>>>>>>> 747156d (finalize modular kct architecture with seperate ingestor and engines packages)
     sources = {
         "arena": ArenaSource(),
         "web": WebSource(),
