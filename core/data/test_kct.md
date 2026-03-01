@@ -1,0 +1,1 @@
+Deep Work notes. Email: misha@trading.com
