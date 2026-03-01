@@ -84,12 +84,3 @@ class OllamaKCTAgent:
             "citations": [{"url": a.source_url, "src": a.source_name} for a in all_assets],
             "task_map": valid_tasks
         }
-    def _reason_tasks(self, prompt):
-        # Update the system prompt to be more defensive against hallucinations
-        system_prompt = (
-            "You are the KCT Brain. Identify the necessary tools. "
-            "IMPORTANT: If you do not know a URL exactly, do not guess it. "
-            "Cal Newport's blog is 'https://calnewport.com/blog/'. "
-            "Return a JSON map with keys 'arena', 'web', or 'local'."
-        )
-        
