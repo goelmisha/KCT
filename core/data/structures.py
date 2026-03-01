@@ -92,74 +92,66 @@ class ArenaSource(DataSource):
 
     def standardize_output(self, raw_data):
         assets = []
-        
-        # ERROR SPOTTER 1: Check the top-level key
-        # Your JSON shows the list is under "data", not "contents"
-        items = raw_data.get("data")
+        items = raw_data.get("data") or raw_data.get("contents")
         
         if items is None:
-            print("[ERROR] Key 'data' not found in API response. Keys present: ", list(raw_data.keys()))
             return []
-
-        print(f"[INFO] Found {len(items)} items in 'data'. Starting extraction...")
 
         for index, block in enumerate(items):
             try:
-                # ERROR SPOTTER 2: Check the type/class key
-                # Your JSON uses "type", but some Are.na endpoints use "class"
-                b_type = block.get("type") or block.get("class")
+                b_type = block.get("class") or block.get("type")
                 b_id = block.get("id")
+                content = None
+                a_type = None
 
-                if b_type == "Channel":
-                    a_type = AssetType.LINK # Mapping a nested channel to a link
-                    # In your JSON, the slug is used for the URL
-                    content = f"https://www.are.na/channel/{block.get('slug')}"
-                
+                # --- UPDATED IMAGE LOGIC ---
+                if b_type == "Image":
+                    a_type = AssetType.IMAGE
+                    img_dict = block.get("image", {})
+                    
+                    # Based on your debug: using 'src' first, then falling back to 'large' or 'medium'
+                    content = (img_dict.get("src") or 
+                               img_dict.get("large") or 
+                               img_dict.get("medium") or
+                               img_dict.get("display", {}).get("url"))
+
+                elif b_type == "Attachment":
+                    a_type = AssetType.DOCUMENT
+                    content = block.get("attachment", {}).get("url")
+
                 elif b_type == "Text":
                     a_type = AssetType.TEXT
-                    content = block.get("content")
-                
-                elif b_type == "Link":
-                    a_type = AssetType.LINK
-                    # Checking common Are.na nesting for links
-                    source_info = block.get("source", {})
-                    content = source_info.get("url") or block.get("title")
-                
-                else:
-                    print(f"      [SKIP] Index {index}: Unknown type '{b_type}'")
-                    continue
+                    # Handle if content is a dict (like your log shows) or a raw string
+                    raw_content = block.get("content")
+                    content = raw_content.get("plain") if isinstance(raw_content, dict) else raw_content
 
-                assets.append(AssetObject(
-                    content=content,
-                    source_url=f"https://www.are.na/block/{b_id}" if b_type != "Channel" else content,
-                    asset_type=a_type,
-                    source_name="Arena",
-                    metadata={
-                        "id": b_id, 
-                        "raw_type": b_type,
-                        "updated": block.get("updated_at")
-                    }
-                ))
+                elif b_type in ["Link", "Channel"]:
+                    a_type = AssetType.LINK
+                    if b_type == "Link":
+                        content = block.get("source", {}).get("url") or block.get("embed", {}).get("url")
+                    else:
+                        content = f"https://www.are.na/channel/{block.get('slug')}"
+
+                if a_type and content:
+                    assets.append(AssetObject(
+                        content=content,
+                        source_url=f"https://www.are.na/block/{b_id}" if b_type != "Channel" else content,
+                        asset_type=a_type,
+                        source_name="Arena",
+                        metadata={"id": b_id, "type": b_type}
+                    ))
 
             except Exception as e:
-                print(f"      [BLOCK ERROR] Failed at index {index}: {str(e)}")
+                print(f"[ERROR] Index {index}: {str(e)}")
         
         return assets
 
-# --- TEST BLOCK ---
+# --- TEST ---
 if __name__ == "__main__":
-    # Initialize the source
+    slug = "timekeeping-timetraveling"
     arena = ArenaSource()
+    results = arena.get_assets(slug)
     
-    # Use the slug you provided earlier
-    test_slug = "timekeeping-timetraveling"
-    
-    print(f"--- Fetching assets from: {test_slug} ---")
-    assets = arena.get_assets(test_slug)
-    
-    if not assets:
-        print("No assets found or error occurred.")
-    else:
-        for i, asset in enumerate(assets, 1):
-            print(f"{i}. {asset}")
-            # print(f"   URL: {asset.source_url}\n")
+    print(f"\n--- Final Output: {len(results)} assets found ---")
+    for item in results:
+        print(item)
