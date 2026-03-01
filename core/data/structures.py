@@ -1,40 +1,4 @@
-import re
-import datetime
-import json
-from abc import ABC, abstractmethod
-from enum import Enum
-import requests
-
-class AssetType(Enum):
-    IMAGE = "image"
-    VIDEO = "video"
-    AUDIO = "audio"
-    DOCUMENT = "document"
-    LINK = "link"
-    MODAL = "modal"
-
-class AssetObject:
-    def __init__(self, content, source_url, asset_type, source_name, metadata=None):
-        self.content = content
-        self.source_url = source_url
-        self.asset_type = asset_type
-        self.source_name = source_name
-        self.metadata = metadata or {}
-    def __repr__(self):
-        return f"AssetObject(type={self.asset_type}, source={self.source_name})"
-
-class DataSource(ABC):
-    @abstractmethod
-    def fetch_data(self, source_identifier):
-        pass
-    @abstractmethod
-    def standardize_output(self, raw_data):
-        pass
-    def get_assets(self, source_identifier):
-        raw_data = self.fetch_data(source_identifier)
-        return self.standardize_output(raw_data)
-
-
+from bs4 import BeautifulSoup
 import re
 import datetime
 import json
@@ -146,6 +110,70 @@ class ArenaSource(DataSource):
         
         return assets
 
+
+class WebSource(DataSource):
+    """
+    Actual Web/Blog Ingestion using BeautifulSoup4.
+    Extracts the main body text and title from a given URL.
+    """
+    def fetch_data(self, url):
+        print(f"[1/2] FETCHING WEB: {url}")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        
+        try:
+            # 10s timeout to prevent hanging on slow blogs
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            return {
+                "url": url, 
+                "html": response.text, 
+                "status": response.status_code
+            }
+        except Exception as e:
+            print(f"[WEB ERROR] Failed to fetch {url}: {e}")
+            return None
+
+    def standardize_output(self, raw_data):
+        if not raw_data:
+            return []
+
+        print(f"[2/2] CLEANING HTML: {raw_data['url']}")
+        try:
+            soup = BeautifulSoup(raw_data["html"], "html.parser")
+
+            # Remove 'noise' elements before extracting text
+            for element in soup(["script", "style", "nav", "footer", "header", "aside", "ad"]):
+                element.decompose()
+
+            # Try to get a clean title
+            title = soup.title.string if soup.title else "Untitled Webpage"
+            
+            # Extract text and handle whitespace
+            # Using 'get_text' with a separator ensures words don't get smashed together
+            clean_text = soup.get_text(separator="\n", strip=True)
+
+            # Limit text length for initial ingestion if needed
+            display_content = clean_text[:2000] # Adjust as per your "Deep Work" needs
+
+            return [AssetObject(
+                content=display_content,
+                source_url=raw_data["url"],
+                asset_type=AssetType.TEXT,
+                source_name="Web",
+                metadata={
+                    "title": title.strip(),
+                    "ingestion_time": datetime.datetime.now().isoformat(),
+                    "status": raw_data["status"]
+                }
+            )]
+        except Exception as e:
+            print(f"[PARSING ERROR] Failed to clean HTML: {e}")
+            return []
+
+
 # --- TEST ---
 if __name__ == "__main__":
     slug = "timekeeping-timetraveling"
@@ -155,3 +183,27 @@ if __name__ == "__main__":
     print(f"\n--- Final Output: {len(results)} assets found ---")
     for item in results:
         print(item)
+    print("\n" + "="*50 + "\n")
+
+    # 2. Test the Web Source (New)
+    web_scraper = WebSource()
+    
+    # Using a high-signal blog post as a test case
+    test_urls = [
+        "https://calnewport.com/blog/", # Productivity/Deep Work context
+        "https://pudding.cool/2024/03/hype/" # Data-heavy site to test cleaning
+    ]
+
+    for url in test_urls:
+        print(f"--- Starting Web Ingestion: {url} ---")
+        web_assets = web_scraper.get_assets(url)
+        
+        if web_assets:
+            asset = web_assets[0]
+            print(f"SUCCESS: Extracted from {asset.metadata.get('title')}")
+            # Print first 200 chars to verify it's clean text and not HTML tags
+            print(f"PREVIEW: {asset.content[:200]}...")
+            print(f"METADATA: {asset.metadata}")
+        else:
+            print(f"FAILURE: Could not extract content from {url}")
+        print("-" * 30)
